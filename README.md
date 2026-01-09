@@ -354,6 +354,63 @@ As a POC, Benlai has several limitations:
 - [ ] **Reactivity**: Datomic/Datahike integration
 - [ ] **Performance**: Optimize for large state trees
 
+## Future Directions
+
+### Framework Integration
+
+Benlai should be framework-agnostic. Instead of only `b/start-server!`, we plan to support:
+
+- **`b/start!`** - Standalone server (current implementation)
+- **`b/create-handler`** - Returns a Ring handler that can be integrated into existing frameworks
+
+The handler would:
+- **GET** - Return the initial page with embedded Hiccup
+- **POST** - Handle events (event details specified in POST parameters)
+
+This allows Benlai to work with Ring, Compojure, or any Ring-compatible framework.
+
+### View Composition
+
+The current `b/defview` macro may have composition limitations. Future design considerations:
+
+- Views could be simple functions (no macro needed)
+- Multiple views can be composed together
+- A root view (function or vector) is passed to `start!` or `create-handler` via configuration
+- Better composability and reusability
+
+### App Configuration
+
+The configuration passed to `start!` or `create-handler` is a dictionary that describes the entire Benlai app:
+
+```clojure
+{:view root-view-function
+ :handlers {:increment my-app/increment
+            :decrement my-app/decrement}
+ :state initial-state
+ :port 8080}
+```
+
+This declarative approach makes the app structure explicit and easier to reason about.
+
+### Data Layer Independence
+
+Benlai is **data-layer agnostic**. The framework only needs to know:
+- What the view is
+- What event handlers exist
+
+How handlers interact with databases (Datomic, PostgreSQL, etc.) is entirely up to the developer. Benlai doesn't care about your data layer - it only cares about:
+1. Current state (whatever you provide)
+2. Event handlers (pure functions that transform state)
+3. Views (Hiccup projections of state)
+
+The `atom` is just a simple default. You could use:
+- A database query result
+- A cached value
+- A reactive stream
+- Anything that can be read and updated
+
+This separation of concerns makes Benlai flexible and framework-agnostic.
+
 ## Project Structure
 
 ```
