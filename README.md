@@ -142,8 +142,9 @@ Then open http://localhost:8080 in your browser.
 
 ## Demo Applications
 
-### 1. Counter App (`my-app.core`)
-
+### 1. Counter App (`my-app.core`)  
+[See the code](./src/my_app/core.clj)
+![A Demo counter and input](./resources/public/counter_and_input_demo.png)
 A simple counter demonstrating basic state management and event handling.
 
 **Features:**
@@ -153,7 +154,10 @@ A simple counter demonstrating basic state management and event handling.
 
 ### 2. Todo List App (`my-app.todo`)
 
-A full-featured todo list application.
+A full-featured todo list application.  
+[See the code](./src/my_app/todo.clj)
+
+![A Demo TODO app Created via BenLai](./resources/public/todo_screenshot.png)
 
 **Features:**
 - Add todos
