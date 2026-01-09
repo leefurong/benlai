@@ -92,7 +92,7 @@
      ;; Toggle all button (if there are todos)
      (when (pos? all-count)
        [:div {:style "background: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 10px;"}
-        [:button {:on-click "my-app.todo/toggle-all"
+        [:button {:on-click ["my-app.todo/toggle-all"]
                   :style "padding: 8px 16px; font-size: 14px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer;"
                   :on-mouseover "this.style.background='#1976D2'"
                   :on-mouseout "this.style.background='#2196F3'"}
@@ -128,7 +128,7 @@
      ;; Footer actions (if there are completed todos)
      (when (pos? completed-count)
        [:div {:style "background: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 10px; text-align: center;"}
-        [:button {:on-click "my-app.todo/clear-completed"
+        [:button {:on-click ["my-app.todo/clear-completed"]
                   :style "padding: 10px 20px; font-size: 14px; background: #ff9800; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; transition: background 0.2s;"
                   :on-mouseover "this.style.background='#f57c00'"
                   :on-mouseout "this.style.background='#ff9800'"}
