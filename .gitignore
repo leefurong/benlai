@@ -43,3 +43,6 @@ Thumbs.db
 .clj-kondo/
 .cljfmt/
 
+# Language Server Protocol
+.lsp/
+
