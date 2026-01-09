@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Benlai - Proof of Concept</title>
+</head>
+<body>
+    <div id="app">Loading...</div>
+
+    <script>
+        // Minimal Benlai Client Runtime
+        // Browser has NO business logic, NO state - only UI rendering
+        const app = document.getElementById('app');
+        
+        // Hiccup to HTML converter (pure UI transformation)
+        function hiccupToHtml(hiccup) {
+            if (typeof hiccup === 'string' || typeof hiccup === 'number') {
+                return String(hiccup);
+            }
+            
+            if (!Array.isArray(hiccup)) {
+                return '';
+            }
+            
+            if (hiccup.length === 0) {
+                return '';
+            }
+            
+            const [tag, ...rest] = hiccup;
+            
+            // Handle text nodes
+            if (typeof tag === 'string' && rest.length === 0) {
+                return tag;
+            }
+            
+            // Handle elements: [tag, attrs?, ...children]
+            let attrs = {};
+            let children = [];
+            
+            if (rest.length > 0 && typeof rest[0] === 'object' && !Array.isArray(rest[0]) && rest[0] !== null) {
+                // Has attributes
+                attrs = rest[0];
+                children = rest.slice(1);
+            } else {
+                // No attributes
+                children = rest;
+            }
+            
+            // Build attributes string
+            let attrsStr = '';
+            for (const [key, value] of Object.entries(attrs)) {
+                // For data attributes, we need to escape HTML but preserve JSON strings
+                if (key === 'data-handler' || key.startsWith('data-')) {
+                    // Escape HTML entities but preserve the string structure
+                    const escapedValue = String(value)
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;')
+                        .replace(/"/g, '&quot;')
+                        .replace(/'/g, '&#39;');
+                    attrsStr += ` ${key}="${escapedValue}"`;
+                } else if (key === 'style' && typeof value === 'string') {
+                    attrsStr += ` style="${escapeHtml(value)}"`;
+                } else if (key.startsWith('on-')) {
+                    // Event handlers - store in data attribute for later attachment
+                    attrsStr += ` data-${key.substring(3)}="${escapeHtml(String(value))}"`;
+                } else if (typeof value === 'string' || typeof value === 'number') {
+                    attrsStr += ` ${key}="${escapeHtml(String(value))}"`;
+                }
+            }
+            
+            // Render children
+            const childrenHtml = children.map(child => hiccupToHtml(child)).join('');
+            
+            // Self-closing tags
+            const selfClosing = ['img', 'br', 'hr', 'input', 'meta', 'link'];
+            if (selfClosing.includes(tag)) {
+                return `<${tag}${attrsStr} />`;
+            }
+            
+            return `<${tag}${attrsStr}>${childrenHtml}</${tag}>`;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Render Hiccup tree to DOM
+        function renderHiccup(hiccup) {
+            const html = hiccupToHtml(hiccup);
+            app.innerHTML = html;
+            attachEventListeners();
+        }
+        
+        // Resolve parameter expression to actual value
+        // Supports: "input[name].value", "#id.value", "[data-x].dataset.x", etc.
+        function resolveParam(expr, contextElement) {
+            if (typeof expr !== 'string') {
+                return expr; // Already a literal value
+            }
+            
+            // Check if it's an expression (contains selector)
+            if (!expr.includes('.') && !expr.includes('[') && !expr.startsWith('#')) {
+                return expr; // Plain string literal
+            }
+            
+            try {
+                // Parse selector and property path
+                // Format: "selector.property.path" or "selector[attr].property.path"
+                let selector, propertyPath;
+                
+                // Handle attribute selector: [name="x"]
+                if (expr.startsWith('[')) {
+                    const bracketEnd = expr.indexOf(']');
+                    if (bracketEnd === -1) return expr;
+                    selector = expr.substring(0, bracketEnd + 1);
+                    propertyPath = expr.substring(bracketEnd + 2); // Skip '].'
+                }
+                // Handle ID selector: #id
+                else if (expr.startsWith('#')) {
+                    const dotIndex = expr.indexOf('.');
+                    if (dotIndex === -1) return expr;
+                    selector = expr.substring(0, dotIndex);
+                    propertyPath = expr.substring(dotIndex + 1);
+                }
+                // Handle tag selector: input, button, etc.
+                else {
+                    const dotIndex = expr.indexOf('.');
+                    if (dotIndex === -1) return expr;
+                    selector = expr.substring(0, dotIndex);
+                    propertyPath = expr.substring(dotIndex + 1);
+                }
+                
+                // Find element
+                let element;
+                if (selector.startsWith('#')) {
+                    element = document.getElementById(selector.substring(1));
+                } else if (selector.startsWith('[')) {
+                    // Attribute selector: [name="x"] or [name]
+                    const match = selector.match(/\[([^=]+)(?:="([^"]+)")?\]/);
+                    if (match) {
+                        const attrName = match[1];
+                        const attrValue = match[2];
+                        if (attrValue) {
+                            element = app.querySelector(`[${attrName}="${attrValue}"]`);
+                        } else {
+                            element = app.querySelector(`[${attrName}]`);
+                        }
+                    }
+                } else {
+                    // Tag selector: find within context or app
+                    const searchRoot = contextElement?.closest('form') || contextElement?.parentElement || app;
+                    element = searchRoot.querySelector(selector);
+                }
+                
+                if (!element) {
+                    console.warn(`Element not found for selector: ${selector}`);
+                    return null;
+                }
+                
+                // Navigate property path
+                const props = propertyPath.split('.');
+                let value = element;
+                for (const prop of props) {
+                    if (value == null) return null;
+                    
+                    // Handle dataset access: dataset.x -> data-x
+                    if (prop === 'dataset') {
+                        value = value.dataset;
+                    }
+                    // Handle attributes: getAttribute('x')
+                    else if (prop.startsWith('attr:')) {
+                        const attrName = prop.substring(5);
+                        value = value.getAttribute(attrName);
+                    }
+                    // Handle standard properties
+                    else {
+                        value = value[prop];
+                    }
+                }
+                
+                return value;
+            } catch (error) {
+                console.warn(`Failed to resolve param expression: ${expr}`, error);
+                return expr; // Return as-is if resolution fails
+            }
+        }
+        
+        // Parse event handler (supports both string and vector format)
+        function parseEventHandler(handlerAttr) {
+            if (!handlerAttr) return null;
+            
+            // Trim whitespace
+            handlerAttr = handlerAttr.trim();
+            
+            // Check if it looks like a JSON array (starts with [)
+            if (handlerAttr.startsWith('[') && handlerAttr.endsWith(']')) {
+                try {
+                    // Try parsing as JSON array (vector format)
+                    const parsed = JSON.parse(handlerAttr);
+                    if (Array.isArray(parsed) && parsed.length > 0) {
+                        return {
+                            handler: parsed[0],
+                            params: parsed.slice(1)
+                        };
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse handler as JSON array:', handlerAttr, e);
+                    // Fall through to simple string format
+                }
+            }
+            
+            // Simple string format
+            return {
+                handler: handlerAttr,
+                params: []
+            };
+        }
+        
+        // Resolve all parameters in event vector
+        function resolveEventParams(params, contextElement) {
+            return params.map(param => resolveParam(param, contextElement));
+        }
+        
+        async function sendEvent(eventSpec, contextElement = null) {
+            try {
+                console.log('sendEvent - eventSpec:', eventSpec); // Debug
+                
+                // Resolve parameters
+                const resolvedParams = resolveEventParams(eventSpec.params || [], contextElement);
+                console.log('sendEvent - resolvedParams:', resolvedParams); // Debug
+                
+                // Build payload: handler + resolved params as object
+                const payload = {
+                    handler: eventSpec.handler,
+                    ...(resolvedParams.length > 0 ? { params: resolvedParams } : {})
+                };
+                
+                console.log('sendEvent - payload:', payload); // Debug
+                
+                const response = await fetch('/api/event', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(payload)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                // Server returns Hiccup tree (as JSON) - browser converts to HTML
+                const hiccup = await response.json();
+                renderHiccup(hiccup);
+            } catch (error) {
+                console.error('Failed to send event:', error);
+                app.innerHTML = '<p style="color: red;">Error: ' + error.message + '</p>';
+            }
+        }
+        
+        function attachEventListeners() {
+            // Attach click handlers to buttons/links with data-handler attribute
+            const clickable = app.querySelectorAll('button[data-handler], a[data-handler], input[type="submit"][data-handler], [data-handler]');
+            clickable.forEach(element => {
+                const handlerAttr = element.getAttribute('data-handler');
+                if (!handlerAttr) return;
+                
+                console.log('Raw handlerAttr:', handlerAttr); // Debug
+                const eventSpec = parseEventHandler(handlerAttr);
+                console.log('Parsed eventSpec:', eventSpec); // Debug
+                
+                if (eventSpec) {
+                    element.onclick = (e) => {
+                        e.preventDefault();
+                        sendEvent(eventSpec, element);
+                    };
+                }
+            });
+            
+            // Attach submit handlers to forms
+            const forms = app.querySelectorAll('form[data-handler]');
+            forms.forEach(form => {
+                const handlerAttr = form.getAttribute('data-handler');
+                const eventSpec = parseEventHandler(handlerAttr);
+                if (eventSpec) {
+                    form.onsubmit = (e) => {
+                        e.preventDefault();
+                        sendEvent(eventSpec, form);
+                    };
+                }
+            });
+            
+            // Attach change handlers to inputs with data-handler (for real-time updates)
+            const inputs = app.querySelectorAll('input[data-handler], select[data-handler], textarea[data-handler]');
+            inputs.forEach(input => {
+                const handlerAttr = input.getAttribute('data-handler');
+                const eventSpec = parseEventHandler(handlerAttr);
+                if (eventSpec) {
+                    const eventType = input.getAttribute('data-event') || 'change';
+                    input.addEventListener(eventType, () => {
+                        sendEvent(eventSpec, input);
+                    });
+                }
+            });
+        }
+        
+        // Initialize: render server-provided Hiccup on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            const hiccupData = app.getAttribute('data-hiccup');
+            if (hiccupData) {
+                try {
+                    const hiccup = JSON.parse(hiccupData);
+                    renderHiccup(hiccup);
+                } catch (error) {
+                    console.error('Failed to parse initial Hiccup:', error);
+                }
+            } else {
+                attachEventListeners();
+            }
+        });
+    </script>
+</body>
+</html>
+
