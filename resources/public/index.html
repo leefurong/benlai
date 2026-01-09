@@ -15,11 +15,22 @@
         
         // Hiccup to HTML converter (pure UI transformation)
         function hiccupToHtml(hiccup) {
+            // Handle null, undefined, boolean
+            if (hiccup === null || hiccup === undefined) {
+                return '';
+            }
+            
+            if (typeof hiccup === 'boolean') {
+                return '';
+            }
+            
             if (typeof hiccup === 'string' || typeof hiccup === 'number') {
                 return String(hiccup);
             }
             
             if (!Array.isArray(hiccup)) {
+                // If it's an object but not an array, it's likely an error
+                console.warn('hiccupToHtml: unexpected non-array value:', hiccup);
                 return '';
             }
             
@@ -63,15 +74,58 @@
                 } else if (key === 'style' && typeof value === 'string') {
                     attrsStr += ` style="${escapeHtml(value)}"`;
                 } else if (key.startsWith('on-')) {
-                    // Event handlers - store in data attribute for later attachment
-                    attrsStr += ` data-${key.substring(3)}="${escapeHtml(String(value))}"`;
+                    // Event handlers: distinguish between client-side JS and server handlers
+                    // Server handlers are vectors converted to JSON strings (start with [)
+                    // Client-side handlers are plain JavaScript strings
+                    const valueStr = String(value);
+                    const trimmed = valueStr.trim();
+                    
+                    if (Array.isArray(value) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                        // Server handler: vector format (array or JSON string)
+                        // Use same escaping as data-handler (preserve JSON structure)
+                        const jsonValue = Array.isArray(value) ? JSON.stringify(value) : valueStr;
+                        const escapedValue = jsonValue
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;')
+                            .replace(/'/g, '&#39;');
+                        attrsStr += ` data-${key}="${escapedValue}"`;
+                    } else {
+                        // Client-side handler: plain JavaScript code
+                        // Use native browser on-* attribute for direct execution
+                        const jsCode = valueStr
+                            .replace(/"/g, '&quot;')
+                            .replace(/'/g, '&#39;');
+                        attrsStr += ` ${key}="${jsCode}"`;
+                    }
                 } else if (typeof value === 'string' || typeof value === 'number') {
                     attrsStr += ` ${key}="${escapeHtml(String(value))}"`;
                 }
             }
             
-            // Render children
-            const childrenHtml = children.map(child => hiccupToHtml(child)).join('');
+            // Render children - filter out null/undefined and handle each child
+            const childrenHtml = children
+                .filter(child => {
+                    // Filter out null, undefined, and non-renderable values
+                    if (child === null || child === undefined) return false;
+                    if (typeof child === 'boolean') return false;
+                    // Allow strings, numbers, arrays (Hiccup vectors)
+                    return typeof child === 'string' || 
+                           typeof child === 'number' || 
+                           Array.isArray(child);
+                })
+                .map(child => {
+                    try {
+                        const result = hiccupToHtml(child);
+                        // Ensure result is a string
+                        return typeof result === 'string' ? result : '';
+                    } catch (error) {
+                        console.warn('Error rendering child:', child, error);
+                        return '';
+                    }
+                })
+                .join('');
             
             // Self-closing tags
             const selfClosing = ['img', 'br', 'hr', 'input', 'meta', 'link'];
@@ -196,7 +250,8 @@
             // Trim whitespace
             handlerAttr = handlerAttr.trim();
             
-            // Check if it looks like a JSON array (starts with [)
+            // Check if it looks like a JSON array (starts with [ and ends with ])
+            // Must have both to be considered a vector format
             if (handlerAttr.startsWith('[') && handlerAttr.endsWith(']')) {
                 try {
                     // Try parsing as JSON array (vector format)
@@ -206,14 +261,26 @@
                             handler: parsed[0],
                             params: parsed.slice(1)
                         };
+                    } else {
+                        console.warn('Parsed JSON is not a valid handler array:', parsed);
+                        return null;
                     }
                 } catch (e) {
-                    console.warn('Failed to parse handler as JSON array:', handlerAttr, e);
-                    // Fall through to simple string format
+                    console.error('Failed to parse handler as JSON array:', handlerAttr, e);
+                    // If it looks like JSON but fails to parse, it's an error - don't fall through
+                    return null;
                 }
             }
             
-            // Simple string format
+            // If it starts with [ but doesn't end with ], it's likely a truncated JSON string
+            // Don't treat it as a simple string handler - return null to indicate error
+            if (handlerAttr.startsWith('[') && !handlerAttr.endsWith(']')) {
+                console.error('Handler appears to be truncated JSON:', handlerAttr);
+                return null;
+            }
+            
+            // Simple string format (for legacy handlers or plain JS code)
+            // Only use this if it's clearly not a JSON array
             return {
                 handler: handlerAttr,
                 params: []
@@ -227,6 +294,11 @@
         
         async function sendEvent(eventSpec, contextElement = null) {
             try {
+                // Validate eventSpec
+                if (!eventSpec || !eventSpec.handler) {
+                    throw new Error('Invalid event handler: eventSpec is null or missing handler');
+                }
+                
                 console.log('sendEvent - eventSpec:', eventSpec); // Debug
                 
                 // Resolve parameters
@@ -263,46 +335,72 @@
         }
         
         function attachEventListeners() {
-            // Attach click handlers to buttons/links with data-handler attribute
-            const clickable = app.querySelectorAll('button[data-handler], a[data-handler], input[type="submit"][data-handler], [data-handler]');
+            // Support both standard on-* attributes and legacy data-handler
+            // Hiccup converts :on-click to "on-click" (with hyphen) in JSON
+            // Map hyphenated event names to browser event types
+            // Note: Only server handlers (vector format) are attached here
+            // Client-side handlers (plain JS strings) are handled by browser natively
+            const eventNameMap = {
+                'on-click': 'click',
+                'on-submit': 'submit',
+                'on-change': 'change',
+                'on-input': 'input',
+                'on-focus': 'focus',
+                'on-blur': 'blur',
+                'on-mouseover': 'mouseover',
+                'on-mouseout': 'mouseout'
+            };
+            
+            // Attach handlers for server events (only data-on-* attributes with vector format)
+            for (const [attrName, eventType] of Object.entries(eventNameMap)) {
+                const elements = app.querySelectorAll(`[data-${attrName}]`);
+                elements.forEach(element => {
+                    const handlerAttr = element.getAttribute(`data-${attrName}`);
+                    if (!handlerAttr) return;
+                    
+                    // Only process if it's a vector format (starts with [)
+                    // Plain JS strings are handled by browser's native on-* attributes
+                    const trimmed = handlerAttr.trim();
+                    if (!trimmed.startsWith('[')) return;
+                    
+                    // Debug: log the raw attribute value
+                    console.log(`Parsing handler for ${attrName}:`, trimmed);
+                    console.log(`Handler attribute length:`, trimmed.length);
+                    console.log(`Handler attribute first char:`, trimmed[0]);
+                    console.log(`Handler attribute last char:`, trimmed[trimmed.length - 1]);
+                    
+                    const eventSpec = parseEventHandler(handlerAttr);
+                    if (eventSpec && eventSpec.handler) {
+                        console.log(`Parsed event spec:`, eventSpec);
+                        element.addEventListener(eventType, (e) => {
+                            // Only preventDefault for form submissions and links
+                            if (eventType === 'submit' || (eventType === 'click' && element.tagName === 'A')) {
+                                e.preventDefault();
+                            }
+                            sendEvent(eventSpec, element);
+                        });
+                    } else {
+                        console.error(`Failed to parse handler for ${attrName}. Raw value:`, handlerAttr);
+                        console.error(`Trimmed value:`, trimmed);
+                        console.error(`Is array-like:`, trimmed.startsWith('[') && trimmed.endsWith(']'));
+                    }
+                });
+            }
+            
+            // Legacy support: data-handler for click events
+            const clickable = app.querySelectorAll('[data-handler]');
             clickable.forEach(element => {
+                // Skip if already handled by on-click
+                if (element.hasAttribute('data-on-click')) return;
+                
                 const handlerAttr = element.getAttribute('data-handler');
                 if (!handlerAttr) return;
                 
-                console.log('Raw handlerAttr:', handlerAttr); // Debug
                 const eventSpec = parseEventHandler(handlerAttr);
-                console.log('Parsed eventSpec:', eventSpec); // Debug
-                
                 if (eventSpec) {
-                    element.onclick = (e) => {
+                    element.addEventListener('click', (e) => {
                         e.preventDefault();
                         sendEvent(eventSpec, element);
-                    };
-                }
-            });
-            
-            // Attach submit handlers to forms
-            const forms = app.querySelectorAll('form[data-handler]');
-            forms.forEach(form => {
-                const handlerAttr = form.getAttribute('data-handler');
-                const eventSpec = parseEventHandler(handlerAttr);
-                if (eventSpec) {
-                    form.onsubmit = (e) => {
-                        e.preventDefault();
-                        sendEvent(eventSpec, form);
-                    };
-                }
-            });
-            
-            // Attach change handlers to inputs with data-handler (for real-time updates)
-            const inputs = app.querySelectorAll('input[data-handler], select[data-handler], textarea[data-handler]');
-            inputs.forEach(input => {
-                const handlerAttr = input.getAttribute('data-handler');
-                const eventSpec = parseEventHandler(handlerAttr);
-                if (eventSpec) {
-                    const eventType = input.getAttribute('data-event') || 'change';
-                    input.addEventListener(eventType, () => {
-                        sendEvent(eventSpec, input);
                     });
                 }
             });
@@ -325,4 +423,5 @@
     </script>
 </body>
 </html>
+
 

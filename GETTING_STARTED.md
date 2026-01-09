@@ -9,18 +9,34 @@
    # 确保已安装 Clojure CLI (clj)
    ```
 
-2. **启动服务器**：
+2. **启动服务器**（选择其中一个应用）：
+   
+   **计数器应用**：
    ```bash
    clj -M -m my-app.core
+   ```
+   
+   **Todo List 应用**：
+   ```bash
+   clj -M -m my-app.todo
    ```
 
 3. **打开浏览器**：
    访问 http://localhost:8080
 
 4. **测试功能**：
+   
+   **计数器应用**：
    - 点击 "+" 按钮增加计数
    - 点击 "-" 按钮减少计数
    - 观察服务器端状态的变化如何自动反映到 UI
+   
+   **Todo List 应用**：
+   - 在输入框中输入待办事项，点击 "Add" 添加
+   - 点击复选框标记为完成/未完成
+   - 点击 "Delete" 删除单个待办事项
+   - 点击 "Mark All Complete/Incomplete" 批量操作
+   - 点击 "Clear X completed" 清除所有已完成项
 
 ## 工作原理
 
@@ -37,7 +53,8 @@ benlai/
 │   ├── benlai/
 │   │   └── core.clj          # 核心库（defview, start-server!）
 │   └── my_app/
-│       └── core.clj          # 示例应用（计数器）
+│       ├── core.clj          # 示例应用（计数器）
+│       └── todo.clj          # Todo List 应用
 ├── resources/
 │   └── public/
 │       └── index.html        # 客户端 HTML/JS

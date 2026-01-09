@@ -46,18 +46,49 @@
      (swap! views assoc '~name ~name)))
 
 (defn normalize-attrs
-  "Normalize attributes: convert data-handler vectors to JSON strings"
+  "Normalize attributes: convert event handler vectors (on-* or data-handler) to JSON strings"
   [attrs]
   (if (map? attrs)
     (reduce-kv (fn [m k v]
-                 (if (and (= k :data-handler) (vector? v))
+                 (cond
+                   ;; Support both :data-handler and :on-* event handlers
+                   (and (or (= k :data-handler)
+                            (and (keyword? k)
+                                 (str/starts-with? (name k) "on-")))
+                        (vector? v))
                    (assoc m k (json/write-str v))
+                   :else
                    (assoc m k v)))
                {} attrs)
     attrs))
 
+(defn flatten-hiccup-children
+  "Flatten nested vectors in Hiccup children.
+   If a child is a vector that looks like a collection of Hiccup elements (not a single element),
+   flatten it. Otherwise, keep it as is."
+  [children]
+  (mapcat (fn [child]
+            (cond
+              ;; If child is a vector and ALL its elements are also vectors that look like Hiccup elements,
+              ;; it's likely a nested collection like [[div1] [div2]] from mapv
+              (and (vector? child)
+                   (seq child)
+                   (every? (fn [elem]
+                             (and (vector? elem)
+                                  (seq elem)
+                                  (or (keyword? (first elem))
+                                      (string? (first elem)))))
+                           child))
+              ;; This is a collection of Hiccup elements, flatten it
+              child
+              ;; Otherwise, keep as single element
+              :else
+              [child]))
+          children))
+
 (defn normalize-hiccup
-  "Recursively normalize Hiccup tree: convert data-handler vectors to JSON"
+  "Recursively normalize Hiccup tree: convert event handler vectors (on-* or data-handler) to JSON
+   Also flattens nested vectors in children (e.g., from mapv results)"
   [hiccup]
   (cond
     (vector? hiccup)
@@ -65,10 +96,14 @@
       (if (and (seq rest) (map? (first rest)))
         ;; Has attributes map
         (let [attrs (first rest)
-              children (next rest)]
-          (into [tag (normalize-attrs attrs)] (map normalize-hiccup children)))
+              children (next rest)
+              ;; Flatten nested vectors in children (e.g., from mapv)
+              flattened-children (flatten-hiccup-children children)]
+          (into [tag (normalize-attrs attrs)] (map normalize-hiccup flattened-children)))
         ;; No attributes, just children
-        (into [tag] (map normalize-hiccup rest))))
+        (let [;; Flatten nested vectors in children
+              flattened-children (flatten-hiccup-children rest)]
+          (into [tag] (map normalize-hiccup flattened-children)))))
     :else
     hiccup))
 
